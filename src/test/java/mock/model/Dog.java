@@ -3,6 +3,8 @@ package mock.model;
 import javax.persistence.Entity;
 import javax.persistence.Id;
 
+import org.apache.commons.lang3.builder.EqualsBuilder;
+
 @Entity
 public class Dog {
 	@Id
@@ -29,5 +31,10 @@ public class Dog {
 	}
 	public void setBreed(String breed) {
 		this.breed = breed;
+	}
+	
+	@Override
+	public boolean equals(Object other) {
+		return EqualsBuilder.reflectionEquals(this, other, true);
 	}
 }

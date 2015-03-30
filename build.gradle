@@ -19,12 +19,13 @@ dependencies {
 	compile 'org.reflections:reflections:0.9.9'
 	
 	// Hibernate
-	compile 'org.hibernate:hibernate-core:4.3.8.Final'
+	compile 'org.hibernate:hibernate-entitymanager:4.3.5.Final'
 	
 	// tests
 	testCompile group: 'io.vertx', name: 'vertx-core', version: '3.0.0-SNAPSHOT', classifier: 'tests'
 	testCompile group: 'io.vertx', name: 'vertx-unit', version: '3.0.0-SNAPSHOT'
 	testCompile 'junit:junit:4.12'
+	testCompile 'org.apache.commons:commons-lang3:3.3.2'
 
 	testRuntime 'com.h2database:h2:1.4.186'	
 }

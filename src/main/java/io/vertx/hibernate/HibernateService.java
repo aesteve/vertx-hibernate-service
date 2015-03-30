@@ -1,75 +1,296 @@
 package io.vertx.hibernate;
 
-import io.vertx.core.json.JsonArray;
+import io.vertx.core.AsyncResult;
+import io.vertx.core.Future;
+import io.vertx.core.Handler;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
+import io.vertx.hibernate.async.HibernateAsyncResult;
 
-import java.util.Set;
+import java.io.Serializable;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
 
-import javax.persistence.Entity;
-
-import org.hibernate.Session;
-import org.hibernate.SessionFactory;
-import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
-import org.hibernate.cfg.Configuration;
-import org.hibernate.service.ServiceRegistry;
-import org.reflections.Reflections;
+import javax.persistence.EntityManager;
+import javax.persistence.EntityManagerFactory;
+import javax.persistence.EntityTransaction;
+import javax.persistence.Persistence;
+import javax.persistence.criteria.CriteriaQuery;
 
 public class HibernateService {
 	
 	private JsonObject config;
-	private Configuration configuration;
-	private SessionFactory sessionFactory;
+	private EntityManagerFactory entityManagerFactory;
+	private Vertx vertx;
+	private Random rand;
+	private Map<String, EntityManager> managers;
 	
-	public HibernateService(JsonObject config) {
+	public HibernateService(Vertx vertx, JsonObject config) {
 		this.config = config;
+		this.vertx = vertx;
+		this.rand = new Random();
+		managers = new HashMap<String, EntityManager>();
 	}
 	
-	public void start() {
+	public void start(Future<Void> startFuture) {
 		System.out.println("----- Startup service");
-		JsonArray packages = config.getJsonArray("packages");
-		if (packages == null) {
+		String persistenceUnit = config.getString("persistence-unit");
+		if (persistenceUnit == null) {
+			startFuture.fail("No persistence-unit specified in config");
 			return;
 		}
-		
-		configuration = new Configuration();
-		configuration.setProperty("hibernate.dialect", config.getString("dialect"));
-	    configuration.setProperty("hibernate.connection.driver_class", config.getString("connection.driver_class"));
-	    configuration.setProperty("hibernate.connection.url", config.getString("connection.url"));
-	    configuration.setProperty("hibernate.connection.username", config.getString("connection.username"));
-	    if (config.getString("connection.password") != null) {
-	    	configuration.setProperty("hibernate.connection.password", config.getString("connection.password"));
-	    }
-		if (config.getString("connection.datasource") != null)  {
-			configuration.setProperty("hibernate.connection.datasource", config.getString("connection.datasource"));
-		}
-		if (config.getString("connection.pool_size") != null) {
-		    configuration.setProperty("connection.pool_size", config.getString("connection.pool_size"));
-		}
-		if (config.getString("default_schema") != null) {
-		    configuration.setProperty("hibernate.default_schema", config.getString("default_schema"));
-		}
-		if (config.getString("cache_provider_class") != null) {
-		    configuration.setProperty("cache.provider_class", config.getString("cache_provider_class"));
-		}
-	    configuration.setProperty("show_sql", Boolean.toString(config.getBoolean("show_sql", false)));
-	    configuration.setProperty("hibernate.hbm2ddl.auto", config.getString("hbm2ddl.auto", "update"));
-		packages.forEach(aPackage -> {
-			Reflections reflections = new Reflections((String)aPackage);
-			Set<Class<?>> models = reflections.getTypesAnnotatedWith(Entity.class);
-			models.forEach(model -> {
-				configuration.addAnnotatedClass(model);
-			});
+        vertx.executeBlocking(future -> {
+        	try {
+        		entityManagerFactory = Persistence.createEntityManagerFactory(persistenceUnit);
+        		future.complete();
+        	} catch(Exception e) {
+        		future.fail(e);
+        	}
+        }, res -> {
+        	if (res.succeeded()) {
+        		System.out.println("----- Init done");
+            	startFuture.complete();
+        	} else {
+        		System.out.println("----- Init failed");
+            	startFuture.fail(res.cause());
+        	}
+        });
+	}
+	
+	public void createSession(Handler<AsyncResult<String>> handler) {
+		vertx.executeBlocking(future -> {
+			try {
+				String sessionId = generateSessionId();
+				EntityManager em = entityManagerFactory.createEntityManager();
+				getMap().put(sessionId, em);
+				future.complete(sessionId);
+			} catch(Exception e) {
+				future.fail(e);
+			}
+		}, res -> {
+			AsyncResult<String> async;
+			if (res.succeeded()) {
+				async = new HibernateAsyncResult<String>(null, res.result().toString());
+			} else {
+				async = new HibernateAsyncResult<String>(res.cause(), null);
+			}
+			handler.handle(async);
 		});
-        ServiceRegistry serviceRegistry = new StandardServiceRegistryBuilder()
-            .applySettings(configuration.getProperties()).build();
-		sessionFactory = configuration.buildSessionFactory(serviceRegistry);
-		System.out.println("----- Init done");
+	}
+
+	public void beginTransaction(String sessionId, Handler<AsyncResult<Void>> handler) {
+		EntityManager manager = getManager(sessionId);
+		if (manager == null) {
+			handler.handle(new HibernateAsyncResult<Void>("No entity manager found with id : "+sessionId));
+			return;
+		} 
+		vertx.executeBlocking(future -> {
+			try {
+				manager.getTransaction().begin();
+				future.complete();
+			} catch(Exception he) {
+				future.fail(he);
+			}
+		}, res -> {
+			AsyncResult<Void> async;
+			if (res.succeeded()) {
+				async = new HibernateAsyncResult<Void>(null, null);
+			} else {
+				async = new HibernateAsyncResult<Void>(res.cause(), null);
+			}
+			handler.handle(async);
+		});
 	}
 	
-	public Session createSession() {
-		return sessionFactory.openSession();
+	public void flushSession(String sessionId, Handler<AsyncResult<Void>> handler) {
+		EntityManager entityManager = getManager(sessionId);
+		if (entityManager == null) {
+			handler.handle(new HibernateAsyncResult<Void>("No entity manager found with id : "+sessionId));
+			return;
+		} 
+		vertx.executeBlocking(future -> {
+			try {
+				entityManager.flush();
+				future.complete();
+			} catch(Exception e) {
+				future.fail(e);
+			}
+		}, res -> {
+			AsyncResult<Void> async;
+			if (res.succeeded()) {
+				async = new HibernateAsyncResult<Void>(null, null);
+			} else {
+				async = new HibernateAsyncResult<Void>(res.cause(), null);
+			}
+			handler.handle(async);
+		});
 	}
 	
-	public void stop() {
+	public void clearSession(String sessionId, Handler<AsyncResult<Void>> handler) {
+		EntityManager entityManager = getManager(sessionId);
+		if (entityManager == null) {
+			handler.handle(new HibernateAsyncResult<Void>("No entity manager found with id : "+sessionId));
+			return;
+		} 
+		vertx.executeBlocking(future -> {
+			try {
+				entityManager.clear();
+				future.complete();
+			} catch(Exception e) {
+				future.fail(e);
+			}
+		}, res -> {
+			AsyncResult<Void> async;
+			if (res.succeeded()) {
+				async = new HibernateAsyncResult<Void>(null, null);
+			} else {
+				async = new HibernateAsyncResult<Void>(res.cause(), null);
+			}
+			handler.handle(async);
+		});
+	}
+	
+	public void flushAndClose(String sessionId, Handler<AsyncResult<Void>> handler) {
+		EntityManager entityManager = getManager(sessionId);
+		if (entityManager == null) {
+			handler.handle(new HibernateAsyncResult<Void>("No entity manager found with id : "+sessionId));
+			return;
+		} 
+		vertx.executeBlocking(future -> {
+			try {
+				getMap().remove(sessionId);
+				entityManager.flush();
+				if (entityManager.getTransaction() != null) {
+					entityManager.getTransaction().commit();
+				}
+				entityManager.close();
+				future.complete();
+			} catch(Exception e) {
+				future.fail(e);
+			}
+		}, res -> {
+			AsyncResult<Void> async;
+			if (res.succeeded()) {
+				async = new HibernateAsyncResult<Void>(null, null);
+			} else {
+				async = new HibernateAsyncResult<Void>(res.cause(), null);
+			}
+			handler.handle(async);
+		});
+	}
+	
+	public void saveWithinTransaction(String sessionId, Object model, Handler<AsyncResult<Void>> handler) {
+		EntityManager entityManager = getManager(sessionId);
+		if (entityManager == null) {
+			handler.handle(new HibernateAsyncResult<Void>("No session found with id : "+sessionId));
+			return;
+		} 
+		vertx.executeBlocking(future -> {
+			try {
+				EntityTransaction tx = entityManager.getTransaction();
+				tx.begin();
+				entityManager.persist(model);
+				tx.commit();
+				future.complete();
+			} catch (Exception e) {
+				future.fail(e);
+			}
+		}, res -> {
+			if (res.succeeded()) {
+				handler.handle(new HibernateAsyncResult<Void>(null, null));
+			} else {
+				handler.handle(new HibernateAsyncResult<Void>(res.cause(), null));
+			}
+		});
+	}
+	
+	public void find(String sessionId, Class<?> clazz, Serializable id, Handler<AsyncResult<Object>> handler) {
+		EntityManager entityManager = getManager(sessionId);
+		if (entityManager == null) {
+			handler.handle(new HibernateAsyncResult<Object>("No entity manager found with id : "+sessionId));
+			return;
+		} 
+		vertx.executeBlocking(future -> {
+			try {
+				Object result = entityManager.find(clazz, id);
+				future.complete(result);
+			} catch(Exception e) {
+				future.fail(e);
+			}
+		}, res -> {
+			AsyncResult<Object> async;
+			if (res.succeeded()) {
+				async = new HibernateAsyncResult<Object>(null, res.result());
+			} else {
+				async = new HibernateAsyncResult<Object>(res.cause(), null);
+			}
+			handler.handle(async);
+		});		
+	}
+	
+	public void persist(String sessionId, Object model, Handler<AsyncResult<Void>> handler) {
+		EntityManager entityManager = getManager(sessionId);
+		if (entityManager == null) {
+			handler.handle(new HibernateAsyncResult<Void>("No entity manager found with id : "+sessionId));
+			return;
+		} 
+		vertx.executeBlocking(future -> {
+			try {
+				entityManager.persist(model);
+				future.complete();
+			} catch (Exception e) {
+				future.fail(e);
+			}
+		}, res -> {
+			if (res.succeeded()) {
+				handler.handle(new HibernateAsyncResult<Void>(null, null)) ;
+			} else {
+				handler.handle(new HibernateAsyncResult<Void>(res.cause(), null));
+			}
+		});
+	}
+	
+	@SuppressWarnings("unchecked")
+	public<T> void list(String sessionId, CriteriaQuery<T> criteria, Handler<AsyncResult<List<T>>> handler) {
+		EntityManager entityManager = getManager(sessionId);
+		if (entityManager == null) {
+			handler.handle(new HibernateAsyncResult<List<T>>("No entity manager found with id : "+sessionId));
+			return;
+		} 
+		vertx.executeBlocking(future -> {
+			try {
+				List<T> list = entityManager.createQuery(criteria).getResultList();
+				future.complete(list);
+			} catch (Exception e) {
+				future.fail(e);
+			}
+		}, res -> {
+			if (res.succeeded()) {
+				handler.handle(new HibernateAsyncResult<List<T>>(null, (List<T>)res.result()));
+			} else {
+				handler.handle(new HibernateAsyncResult<List<T>>(res.cause(), null));
+			}
+		});		
+	}
+	
+	// TODO : update, delete, merge, persist, createQuery, ...
+	
+	
+	public void stop(Future<Void> future) {
+		future.complete();
+	}
+	
+	private String generateSessionId() {
+		return "HibernateSession-" + System.currentTimeMillis() + "-" + rand.nextInt();
+	}
+	
+	private EntityManager getManager(String sessionId) {
+		return getMap().get(sessionId);
+	}
+	
+	private Map<String, EntityManager> getMap() {
+		return managers;
 	}
 }
