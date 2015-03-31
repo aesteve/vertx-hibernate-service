@@ -17,6 +17,8 @@ import javax.persistence.EntityManager;
 import javax.persistence.EntityManagerFactory;
 import javax.persistence.EntityTransaction;
 import javax.persistence.Persistence;
+import javax.persistence.Query;
+import javax.persistence.criteria.CriteriaBuilder;
 import javax.persistence.criteria.CriteriaQuery;
 
 public class HibernateService {
@@ -230,6 +232,14 @@ public class HibernateService {
 		});		
 	}
 	
+	public CriteriaBuilder getCriteriaBuilder(String sessionId) {
+		EntityManager entityManager = getManager(sessionId);
+		if (entityManager == null) {
+			return null;
+		}
+		return entityManager.getCriteriaBuilder();
+	}
+	
 	public void persist(String sessionId, Object model, Handler<AsyncResult<Void>> handler) {
 		EntityManager entityManager = getManager(sessionId);
 		if (entityManager == null) {
@@ -253,7 +263,7 @@ public class HibernateService {
 	}
 	
 	@SuppressWarnings("unchecked")
-	public<T> void list(String sessionId, CriteriaQuery<T> criteria, Handler<AsyncResult<List<T>>> handler) {
+	public<T> void list(String sessionId, CriteriaQuery<T> criteria, Integer firstItem, Integer lastItem, Handler<AsyncResult<List<T>>> handler) {
 		EntityManager entityManager = getManager(sessionId);
 		if (entityManager == null) {
 			handler.handle(new HibernateAsyncResult<List<T>>("No entity manager found with id : "+sessionId));
@@ -261,7 +271,14 @@ public class HibernateService {
 		} 
 		vertx.executeBlocking(future -> {
 			try {
-				List<T> list = entityManager.createQuery(criteria).getResultList();
+				Query query = entityManager.createQuery(criteria);
+				if (firstItem != null) {
+					query.setFirstResult(firstItem);
+					if (lastItem != null) {
+						query.setMaxResults(lastItem - firstItem);
+					}
+				}
+				List<T> list = query.getResultList();
 				future.complete(list);
 			} catch (Exception e) {
 				future.fail(e);
@@ -273,6 +290,29 @@ public class HibernateService {
 				handler.handle(new HibernateAsyncResult<List<T>>(res.cause(), null));
 			}
 		});		
+	}
+	
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	public<T> void singleResult(String sessionId, CriteriaQuery<T> criteria, Handler<AsyncResult<T>> handler) {
+		EntityManager entityManager = getManager(sessionId);
+		if (entityManager == null) {
+			handler.handle(new HibernateAsyncResult<T>("No entity manager found with id : "+sessionId));
+			return;
+		} 
+		vertx.executeBlocking(future -> {
+			try {
+				Query query = entityManager.createQuery(criteria);
+				future.complete(query.getSingleResult());
+			} catch (Exception e) {
+				future.fail(e);
+			}
+		}, res -> {
+			if (res.succeeded()) {
+				handler.handle(new HibernateAsyncResult(null, res.result()));
+			} else {
+				handler.handle(new HibernateAsyncResult(res.cause(), null));
+			}
+		});			
 	}
 	
 	// TODO : update, delete, merge, persist, createQuery, ...
