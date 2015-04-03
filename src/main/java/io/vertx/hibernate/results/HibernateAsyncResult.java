@@ -1,4 +1,4 @@
-package io.vertx.hibernate.async;
+package io.vertx.hibernate.results;
 
 import io.vertx.core.AsyncResult;
 

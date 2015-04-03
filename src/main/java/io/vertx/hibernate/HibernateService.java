@@ -5,13 +5,16 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
-import io.vertx.hibernate.async.HibernateAsyncResult;
+import io.vertx.hibernate.results.HibernateAsyncResult;
 
 import java.io.Serializable;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 import javax.persistence.EntityManager;
 import javax.persistence.EntityManagerFactory;
@@ -59,6 +62,21 @@ public class HibernateService {
             	startFuture.fail(res.cause());
         	}
         });
+	}
+	
+	public<T> void executeWithEntityManager(Function<EntityManager, T> blockingHandler, Handler<AsyncResult<T>> resultHandler) {
+		vertx.executeBlocking(handler -> {
+			try {
+				EntityManager em = entityManagerFactory.createEntityManager();
+				T result = blockingHandler.apply(em);
+				if (em.isOpen()) {
+					em.close();
+				}
+				handler.complete(result);
+			} catch(Throwable t) {
+				handler.fail(t);
+			}
+		}, resultHandler);
 	}
 	
 	public void createSession(Handler<AsyncResult<String>> handler) {
