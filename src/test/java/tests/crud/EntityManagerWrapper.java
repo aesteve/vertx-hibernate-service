@@ -21,7 +21,7 @@ public class EntityManagerWrapper extends VertxHibernateTestBase {
 	public void wrapEntityManagerAndSave(TestContext context) {
 		Async async = context.async();
 		final Dog bill = new Dog("Bill", "Cocker");
-		service.executeWithEntityManager(entityManager -> {
+		service.withEntityManager(entityManager -> {
 			EntityTransaction tx = entityManager.getTransaction();
 			tx.begin();
 			entityManager.persist(bill);
@@ -32,7 +32,7 @@ public class EntityManagerWrapper extends VertxHibernateTestBase {
 				result.cause().printStackTrace();
 			}
 			assertTrue(result.succeeded());
-			service.executeWithEntityManager(secondEm -> {
+			service.withEntityManager(secondEm -> {
 				Dog dog = secondEm.find(Dog.class, "Bill");
 				return dog;
 			}, secondResult -> {

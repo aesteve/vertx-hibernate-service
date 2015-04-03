@@ -7,7 +7,6 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.unit.Async;
 import io.vertx.ext.unit.TestContext;
 import io.vertx.hibernate.HibernateService;
-import io.vertx.hibernate.utils.SimpleFuture;
 
 import org.junit.After;
 import org.junit.Before;
@@ -24,7 +23,7 @@ public class VertxHibernateTestBase {
 		vertx = Vertx.vertx();
 		createConfig();
 		service = new HibernateService(vertx, config);
-		Future<Void> future = new SimpleFuture<Void>();
+		Future<Void> future = Future.future();
 		future.setHandler(result -> {
 			if (result.cause() != null)  {
 				result.cause().printStackTrace();
@@ -39,7 +38,7 @@ public class VertxHibernateTestBase {
 	public void tearDown(TestContext context) {
 		if (service != null) {
 			Async async = context.async();
-			Future<Void> future = new SimpleFuture<Void>();
+			Future<Void> future = Future.future();
 			future.setHandler(result -> {
 				assertTrue(result.succeeded());
 				async.complete();

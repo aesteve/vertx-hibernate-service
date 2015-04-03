@@ -5,6 +5,8 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.logging.Logger;
+import io.vertx.core.logging.impl.LoggerFactory;
 import io.vertx.hibernate.results.HibernateAsyncResult;
 
 import java.io.Serializable;
@@ -12,9 +14,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
-import java.util.function.Consumer;
 import java.util.function.Function;
-import java.util.function.Supplier;
 
 import javax.persistence.EntityManager;
 import javax.persistence.EntityManagerFactory;
@@ -25,6 +25,8 @@ import javax.persistence.criteria.CriteriaBuilder;
 import javax.persistence.criteria.CriteriaQuery;
 
 public class HibernateService {
+	
+	private final Logger log = LoggerFactory.getLogger(HibernateService.class);
 	
 	private JsonObject config;
 	private EntityManagerFactory entityManagerFactory;
@@ -40,7 +42,7 @@ public class HibernateService {
 	}
 	
 	public void start(Future<Void> startFuture) {
-		System.out.println("----- Startup service");
+		log.info("----- Startup Hibernate service");
 		String persistenceUnit = config.getString("persistence-unit");
 		if (persistenceUnit == null) {
 			startFuture.fail("No persistence-unit specified in config");
@@ -55,26 +57,44 @@ public class HibernateService {
         	}
         }, res -> {
         	if (res.succeeded()) {
-        		System.out.println("----- Init done");
+        		log.info("----- Init done");
             	startFuture.complete();
         	} else {
-        		System.out.println("----- Init failed");
+        		log.info("----- Init failed");
             	startFuture.fail(res.cause());
         	}
         });
 	}
 	
-	public<T> void executeWithEntityManager(Function<EntityManager, T> blockingHandler, Handler<AsyncResult<T>> resultHandler) {
+	public<T> void withEntityManager(Function<EntityManager, T> blockingHandler, Handler<AsyncResult<T>> resultHandler) {
 		vertx.executeBlocking(handler -> {
+			EntityManager em = null;
 			try {
-				EntityManager em = entityManagerFactory.createEntityManager();
+				em = entityManagerFactory.createEntityManager();
 				T result = blockingHandler.apply(em);
-				if (em.isOpen()) {
-					em.close();
-				}
 				handler.complete(result);
 			} catch(Throwable t) {
 				handler.fail(t);
+			} finally {
+				closeSilently(em);
+			}
+		}, resultHandler);
+	}
+	
+	public<T> void withinTransaction(Function<EntityManager, T> blockingHandler, Handler<AsyncResult<T>> resultHandler) {
+		vertx.executeBlocking(handler -> {
+			EntityManager em = null;
+			try {
+				em = entityManagerFactory.createEntityManager();
+				EntityTransaction tx = em.getTransaction();
+				tx.begin();
+				T result =  blockingHandler.apply(em);
+				tx.commit();
+				handler.complete(result);
+			} catch(Throwable t) {
+				handler.fail(t);
+			} finally {
+				closeSilently(em);
 			}
 		}, resultHandler);
 	}
@@ -350,5 +370,16 @@ public class HibernateService {
 	
 	private Map<String, EntityManager> getMap() {
 		return managers;
+	}
+	
+	private void closeSilently(EntityManager em) {
+		try {
+			if (em != null && em.isOpen()) {
+				em.close();
+			}
+		} catch(RuntimeException re) {
+			log.error(re);
+		}
+
 	}
 }
